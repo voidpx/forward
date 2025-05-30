@@ -5,6 +5,7 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
@@ -55,7 +56,8 @@ public class Tunnel {
 		int hl = msg[0];
 		String host = new String(msg, 1, hl, StandardCharsets.UTF_8);
 		int port = (msg[hl+1] << 8) | (msg[hl + 2] & 0xff);
-		peer = new Socket(host, port);
+		peer = new Socket();
+		peer.connect(new InetSocketAddress(host, port));
 		ProtoOp.CONN_OK.write(out);
 		out.write(new byte[] {0, 0});
 		out.flush();
@@ -80,7 +82,7 @@ public class Tunnel {
 				}
 			} catch (IOException e) {
 				close(false);
-				log.error(e.getMessage(), e);
+				log.debug(e.getMessage(), e);
 			}
 		});
 		backward.setName(ts + "=>" + peer);
@@ -106,7 +108,7 @@ public class Tunnel {
 			}
 		} catch (Exception e) {
 			close(false);
-			log.error("IO error occurred", e);
+			log.debug("IO error occurred", e);
 		}
 	}
 	

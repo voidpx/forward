@@ -35,7 +35,16 @@ public class Client {
 			try {
 				Socket s = sf.createSocket(serverHost, serverPort);
 				Tunnel t = new Tunnel(s);
-				t.connect(peer, ports.get(peer.getLocalPort()), peer.getLocalPort() + portOffset);
+				int rp;
+				String rh = ports.get(peer.getLocalPort());
+				int ci = rh.lastIndexOf(':');
+				if (ci >= 0 && !(rh.contains("]") && ci > 0 && rh.charAt(ci-1) != ']')) {
+					rp = Integer.parseInt(rh.substring(ci + 1));
+					rh = rh.substring(0, ci);
+				} else {
+					rp = peer.getLocalPort() + portOffset;
+				}
+				t.connect(peer, rh, rp);
 				t.forward();
 			} catch (IOException e) {
 				log.error(e.getMessage(), e);
