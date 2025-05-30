@@ -104,10 +104,10 @@ public class Start {
 	}
 
 	private static final String USAGE = "Usage:\n"
-			+ "	commands:\n" 
-			+ "		keytool <args>\n" 
-			+ " 	server -p <port>\n"
-			+ "		client -p <server port> -c <config> -h <server host> -o <port offset>\n";
+			+ "commands:\n" 
+			+ "	keytool <args>\n" 
+			+ "	server -p <port>\n"
+			+ "	client -p <server port> -c <config> -h <server host> -o <port offset>\n";
 	
 	private static void startServer(int port) throws Exception {
 		SSLContext ctx = createSSLContext(
