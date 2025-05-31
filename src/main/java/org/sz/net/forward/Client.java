@@ -48,6 +48,11 @@ public class Client {
 				t.forward();
 			} catch (IOException e) {
 				log.error(e.getMessage(), e);
+				try {
+					peer.close();
+				} catch (IOException e1) {
+					log.debug(e1.getMessage(), e1);
+				}
 			}
 		});
 		th.setName(peer.toString());
