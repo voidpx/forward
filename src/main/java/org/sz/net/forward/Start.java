@@ -13,6 +13,8 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
 import java.util.Properties;
 
+import javax.net.ServerSocketFactory;
+import javax.net.SocketFactory;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
@@ -106,34 +108,50 @@ public class Start {
 	private static final String USAGE = "Usage:\n"
 			+ "commands:\n" 
 			+ "	keytool <args>\n" 
-			+ "	server -p <port>\n"
-			+ "	client -p <server port> -c <config> -h <server host> -o <port offset>\n";
+			+ "	server -p <port> -a <certificate path> -n\n"
+			+ "	client -p <server port> -c <config> -h <server host> -o <port offset> -a <certificate path> -n\n";
 	
-	private static void startServer(int port) throws Exception {
+	private static void startServer(int port, String certPath, boolean nossl) throws Exception {
+		if (!certPath.endsWith("/")) {
+			certPath += "/";
+		}
 		SSLContext ctx = createSSLContext(
 				new KeyBundle[] { KeyBundle.fromFile("client",
-						"certs/client.crt",
-						"certs/client.key") },
+						certPath + "certs/client.crt",
+						certPath + "certs/client.key") },
 				new KeyBundle[] { KeyBundle.fromFile("server",
-						"certs/server.crt",
-						"certs/server.key"), },
+						certPath + "certs/server.crt",
+						certPath + "certs/server.key"), },
 				new SSLParams("TLCP", "PKIX", "NewSunX509"));
-		new Server(ctx.getServerSocketFactory(), port).start();
+		if (nossl) {
+			new Server(ServerSocketFactory.getDefault(), port).start();
+		} else {
+			new Server(ctx.getServerSocketFactory(), port).start();
+		}
+		
 		
 	}
 	
-	private static void startClient(String config, String shost, int sport, int poff) throws Exception {
+	private static void startClient(String config, String shost, int sport, int poff, String certPath, boolean nossl) throws Exception {
+		if (!certPath.endsWith("/")) {
+			certPath += "/";
+		}
 		SSLContext cctx = createSSLContext(
 				new KeyBundle[] { KeyBundle.fromFile("server",
-						"certs/server.crt",
-						"certs/server.key") },
+						certPath + "certs/server.crt",
+						certPath + "certs/server.key") },
 				new KeyBundle[] { KeyBundle.fromFile("client",
-						"certs/client.crt",
-						"certs/client.key"), },
+						certPath + "certs/client.crt",
+						certPath + "certs/client.key"), },
 				new SSLParams("TLCP", "TencentPKIX", "PKIX"));
 		Properties p = new Properties();
 		p.load(new FileInputStream(Path.of(config).toFile()));
-		new Client(cctx.getSocketFactory(), p, shost, sport, poff).start();
+		if (nossl) {
+			new Client(SocketFactory.getDefault(), p, shost, sport, poff).start();
+		} else {
+			new Client(cctx.getSocketFactory(), p, shost, sport, poff).start();
+		}
+		
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -142,6 +160,8 @@ public class Start {
 			System.exit(1);
 		}
 		String cmd = args[0];
+		String certPath = "./";
+		boolean nossl = false;
 		switch (cmd) {
 		case "keytool":
 			System.out.println("args: " + String.join(" ", args));
@@ -152,9 +172,13 @@ public class Start {
 			for (int i = 1; i < args.length; i++) {
 				if ("-p".equals(args[i]) && i < args.length - 1) {
 					port = Integer.parseInt(args[i+1]);
+				} else if ("-a".equals(args[i]) && i < args.length - 1 && args[i+1] != null) {
+					certPath = args[i+1];
+				} else if ("-n".equals(args[i])) {
+					nossl = true;
 				}
 			}
-			startServer(port);
+			startServer(port, certPath, nossl);
 			break;
 		case "client":
 			String shost = null;
@@ -170,6 +194,10 @@ public class Start {
 					config = args[i+1];
 				} else if ("-o".equals(args[i]) && i < args.length - 1) {
 					poff = Integer.parseInt(args[i+1]);
+				} else if ("-a".equals(args[i]) && i < args.length - 1 && args[i+1] != null) {
+					certPath = args[i+1];
+				} else if ("-n".equals(args[i])) {
+					nossl = true;
 				}
 			}
 			if (shost == null) {
@@ -178,7 +206,7 @@ public class Start {
 			if (config == null) {
 				throw new IllegalArgumentException("-c is required to specify the configuration file");
 			}
-			startClient(config, shost, sport, poff);
+			startClient(config, shost, sport, poff, certPath, nossl);
 			break;
 		}
 	}

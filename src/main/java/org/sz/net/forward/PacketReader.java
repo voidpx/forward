@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 // a packet: two byte length plus the content
 public class PacketReader {
-	public static final int MAX_PACKET_LEN = 1450;
+	public static final int MAX_PACKET_LEN = (1 << 16) - 0x80; //???
 	InputStream in;
 	public PacketReader(InputStream in) {
 		this.in = in;

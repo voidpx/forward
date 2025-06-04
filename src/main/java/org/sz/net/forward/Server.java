@@ -6,6 +6,9 @@ import java.net.Socket;
 
 import javax.net.ServerSocketFactory;
 
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
 public class Server {
 	ServerSocketFactory sf;
 	int port;
@@ -17,9 +20,16 @@ public class Server {
 	private static void handleConn(Socket s) {
 		Thread th = new Thread(() -> {
 			try {
-				Tunnel t = new Tunnel(s);
-				t.accept();
-				t.forward();
+				TunnelServer t = new TunnelServer(s);
+				while (true) {
+					if (!t.accept()) {
+						continue;
+					}
+					if (!t.forward()) {
+						log.debug("tunnel closed");
+						break;
+					}
+				}
 			} catch (IOException e) {
 				e.printStackTrace();
 			}

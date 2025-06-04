@@ -21,20 +21,22 @@ public class Client {
 	String serverHost;
 	int serverPort;
 	int portOffset = 0;
-	public Client(SocketFactory sf, Properties config, String serverHost, int serverPort, int poff) {
+	TunnelClientPool pool;
+	public Client(SocketFactory sf, Properties config, String serverHost, int serverPort, int poff) throws IOException {
 		this.sf = sf;
 		this.serverHost = serverHost;
 		this.serverPort = serverPort;
 		this.portOffset = poff;
 		ports = config.entrySet().stream().map(e -> Map.entry(Integer.parseInt((String)e.getKey()), (String)e.getValue()))
 			.collect(Collectors.toMap(e -> e.getKey(), e -> e.getValue()));
+		pool = new TunnelClientPool(sf, serverHost, serverPort);
+		
 	}
 	
 	private void handleConn(Socket peer) throws UnknownHostException, IOException {
 		Thread th = new Thread(() -> {
 			try {
-				Socket s = sf.createSocket(serverHost, serverPort);
-				Tunnel t = new Tunnel(s);
+				TunnelClient t = pool.get();
 				int rp;
 				String rh = ports.get(peer.getLocalPort());
 				int ci = rh.lastIndexOf(':');
@@ -66,6 +68,7 @@ public class Client {
 			try (ServerSocket ss = new ServerSocket(port)) {
 				while (true) {
 					Socket s = ss.accept();
+					s.setTcpNoDelay(true);
 					handleConn(s);
 				}
 			} catch (IOException e) {

@@ -5,9 +5,7 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 import lombok.extern.slf4j.Slf4j;
@@ -21,114 +19,142 @@ public class Tunnel {
 	PacketReader pr;
 	public Tunnel(Socket ts) throws IOException {
 		this.ts = ts;
+		this.ts.setTcpNoDelay(true);
 		this.in = new BufferedInputStream(ts.getInputStream());
 		this.out = new BufferedOutputStream(ts.getOutputStream());
 		pr = new PacketReader(this.in);
 	}
 	
-	public void connect(Socket peer, String host, int port) throws IOException {
-		ProtoOp.CONN.write(out);
-		byte[] h = host.getBytes(StandardCharsets.UTF_8);
-		assert h.length < 256;
-		short len = (short)(h.length + 3); // 2 bytes port, 1 byte host length
-		out.write(len >> 8);
-		out.write(len & 0xff);
-		out.write(h.length);
-		out.write(h);
-		out.write(new byte[] {(byte)(port>>8), (byte)(port&0xff)});
-		out.flush();
-		
-		ProtoOp op = ProtoOp.read(in);
-		if (op != ProtoOp.CONN_OK) {
-			throw new IOException("cannot connect to " + host + ":" + port);
-		}
-		pr.read();
-		// connected
-		this.peer = peer;
-	}
-	
-	public void accept() throws IOException {
-		ProtoOp op = ProtoOp.read(in);
-		if (op != ProtoOp.CONN) {
-			throw new IOException("expected CONN command");
-		}
-		byte[] msg = pr.read();
-		int hl = msg[0];
-		String host = new String(msg, 1, hl, StandardCharsets.UTF_8);
-		int port = (msg[hl+1] << 8) | (msg[hl + 2] & 0xff);
-		peer = new Socket();
-		peer.connect(new InetSocketAddress(host, port));
-		ProtoOp.CONN_OK.write(out);
-		out.write(new byte[] {0, 0});
-		out.flush();
-	}
-	
-	public void forward() {
+	public boolean forward() {
 		Objects.requireNonNull(peer, "peer is null, accept or connect must be called first");
 		Thread backward = new Thread(() -> {
+			OutputStream po;
 			try {
-				OutputStream po = peer.getOutputStream();
-				while (true) {
-					ProtoOp op = ProtoOp.read(in);
-					byte[] msg = pr.read();
-					if (op == ProtoOp.FORWARD) {
+				po = peer.getOutputStream();
+			} catch (IOException e) {
+				log.debug("error getting output stream from peer", e);
+				disconnect();
+				return;
+			}
+			while (true) {
+				ProtoOp op;
+				byte[] msg;
+				try {
+					op = ProtoOp.read(in);
+					msg = pr.read();
+				} catch (IOException e) {
+					log.error("error reading from tunnel", e);
+					close();
+					break;
+				}
+				if (op == ProtoOp.FORWARD) {
+					try {
 						po.write(msg);
 						po.flush();
-					} else if (op == ProtoOp.DISCONN) {
-						close(false);
-					} else {
-						throw new IOException("Invalid protocol op: " + op);
+					} catch (IOException e) {
+						log.error("error writting to peer", e);
+						disconnect();
+						break;
 					}
+				} else if (op == ProtoOp.DISCONN) {
+					onDisconn();
+					break;
+				} else {
+					log.error("invalid protocol op: {}", op);
+					close();
+					break;
 				}
-			} catch (IOException e) {
-				close(false);
-				log.debug(e.getMessage(), e);
 			}
 		});
 		backward.setName(ts + "=>" + peer);
 		backward.setDaemon(true);
 		backward.start();
 		Thread.currentThread().setName(peer + "=>" + ts);
+		InputStream pi;
 		try {
-			InputStream pi = peer.getInputStream();
-			byte[] buf = new byte[PacketReader.MAX_PACKET_LEN + 2];
-			while (true) {
-				int n = pi.read(buf, 2, PacketReader.MAX_PACKET_LEN);
-				if (n == -1) {
-					log.info("peer closed");
-					close(true);
-					log.info("tunnel closed");
-					break;
-				}
-				buf[0] = (byte)(n >> 8);
-				buf[1] = (byte)(n & 0xff);
+			pi = peer.getInputStream();
+		} catch (IOException e) {
+			log.error("error getting peer input stream");
+			disconnect();
+			waitFor(backward);
+			return true;
+		}
+		
+		boolean ret = true;
+		byte[] buf = new byte[PacketReader.MAX_PACKET_LEN + 2];
+		while (true) {
+			int n;
+			try {
+				n = pi.read(buf, 2, PacketReader.MAX_PACKET_LEN);
+			} catch (IOException e) {
+				log.debug("error reading from peer", e);
+				disconnect();
+				break;
+			}
+			if (n == -1) {
+				log.info("peer closed");
+				disconnect();
+				break;
+			}
+			buf[0] = (byte) (n >> 8);
+			buf[1] = (byte) (n & 0xff);
+			try {
 				ProtoOp.FORWARD.write(out);
 				out.write(buf, 0, n + 2);
 				out.flush();
+			} catch (IOException e) {
+				log.error("error farwarding to tunnel", e);
+				close();
+				ret = false;
+				break;
 			}
-		} catch (Exception e) {
-			close(false);
-			log.debug("IO error occurred", e);
+		}
+		waitFor(backward);
+		return ret;
+	}
+	
+	private void waitFor(Thread t) {
+		try {
+			t.join();
+		} catch (InterruptedException e) {
+			log.debug("interrupted while waiting for thread {}", t);
 		}
 	}
 	
-	private synchronized void close(boolean notifyOtherEnd) {
+	private synchronized void disconnect() {
 		try {
-			if (notifyOtherEnd) {
-				ProtoOp.DISCONN.write(out);
-				out.write(new byte[] {0,0}); // zero length
-				out.flush();
-			}
-			ts.close();
-			if (peer != null) {
-				peer.close();
-			}
+			ProtoOp.DISCONN.write(out);
+			out.write(new byte[] {0,0}); // zero length
+			out.flush();
+			onDisconn();
 		} catch (IOException e) {
-			log.error("error while closing tunnel", e);
-		} finally {
-//			ts = null;
-//			peer = null;
+			log.error("error while DISCONN", e);
 		}
+	}
+	
+	protected synchronized void onDisconn() {
+		closePeer();
+	}
+	
+	private synchronized void closePeer() {
+		if (peer == null) {return;}
+		try {
+			peer.close();
+			peer = null;
+		} catch (IOException e) {
+			log.debug("error closing peer", e);
+		}
+	}
+	
+	public synchronized void close() {
+		if (ts == null) {return;}
+		try {
+			ts.close();
+			ts = null;
+		} catch (IOException e) {
+			log.debug("error while closing tunnel", e);
+		}
+		closePeer();
 	}
 
 	
