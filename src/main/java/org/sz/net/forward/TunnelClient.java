@@ -44,8 +44,8 @@ public class TunnelClient extends Tunnel {
 	@Override
 	protected synchronized void onDisconn() {
 		if (peer != null) {
+			super.onDisconn();
 			onDisconn.accept(this);
 		}
-		super.onDisconn();
 	}
 }
