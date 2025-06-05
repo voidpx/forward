@@ -18,10 +18,10 @@ public class TunnelServer extends Tunnel {
 	// called on server
 	public boolean accept() throws IOException {
 		ProtoOp op = ProtoOp.read(in);
+		byte[] msg = pr.read();
 		if (op != ProtoOp.CONN) {
 			throw new IOException("expected CONN command");
 		}
-		byte[] msg = pr.read();
 		int hl = msg[0];
 		String host = new String(msg, 1, hl, StandardCharsets.UTF_8);
 		int port = (msg[hl+1] << 8) | (msg[hl + 2] & 0xff);
