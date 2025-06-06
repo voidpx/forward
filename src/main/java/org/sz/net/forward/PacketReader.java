@@ -16,7 +16,7 @@ public class PacketReader {
 		if (n != lenb.length) {
 			throw new IOException("Invalid header");
 		}
-		int len = (lenb[0] << 8) | (lenb[1] & 0xff);
+		int len = ((lenb[0]&0xff) << 8) | (lenb[1] & 0xff);
 		assert len <= MAX_PACKET_LEN;
 		byte[] buf = new byte[len];
 		int s = 0;
@@ -31,5 +31,6 @@ public class PacketReader {
 		}
 		return buf;
 	}
+	
 
 }

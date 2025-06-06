@@ -12,11 +12,13 @@ import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class Tunnel {
+	static final int KA_INTERVAL = 2 * 60 * 1000; // 2 minutes
 	Socket ts;
 	Socket peer;
 	OutputStream out;
 	InputStream in;
 	PacketReader pr;
+	volatile long lastActive = System.currentTimeMillis();
 	public Tunnel(Socket ts) throws IOException {
 		this.ts = ts;
 		this.ts.setTcpNoDelay(true);
@@ -25,15 +27,19 @@ public class Tunnel {
 		pr = new PacketReader(this.in);
 	}
 	
-	public boolean forward() {
+	private synchronized void updateLiveness() {
+		lastActive = System.currentTimeMillis();
+	}
+	
+	public void forward() {
 		Objects.requireNonNull(peer, "peer is null, accept or connect must be called first");
 		Thread backward = new Thread(() -> {
 			OutputStream po;
 			try {
 				po = peer.getOutputStream();
 			} catch (IOException e) {
-				log.debug("error getting output stream from peer", e);
-				disconnect();
+				log.error("error getOutputStream for peer");
+				close(true);
 				return;
 			}
 			while (true) {
@@ -44,7 +50,7 @@ public class Tunnel {
 					msg = pr.read();
 				} catch (IOException e) {
 					log.error("error reading from tunnel", e);
-					close();
+					close(false);
 					break;
 				}
 				if (op == ProtoOp.FORWARD) {
@@ -52,18 +58,20 @@ public class Tunnel {
 						po.write(msg);
 						po.flush();
 					} catch (IOException e) {
-						log.error("error writting to peer", e);
-						disconnect();
+						log.error("error writing to peer", e);
+						close(true);
 						break;
 					}
+				} else if (op == ProtoOp.KEEPALV) {
+					log.debug("keep alive probe");
 				} else if (op == ProtoOp.DISCONN) {
-					onDisconn();
+					close(false);
 					break;
 				} else {
 					log.error("invalid protocol op: {}", op);
-					close();
 					break;
 				}
+				updateLiveness();
 			}
 		});
 		backward.setName(ts + "=>" + peer);
@@ -74,88 +82,84 @@ public class Tunnel {
 		try {
 			pi = peer.getInputStream();
 		} catch (IOException e) {
-			log.error("error getting peer input stream");
-			disconnect();
-			waitFor(backward);
-			return true;
+			log.error("error getInputStream from peer", e);
+			close(true);
+			return;
 		}
-		
-		boolean ret = true;
-		byte[] buf = new byte[PacketReader.MAX_PACKET_LEN + 2];
-		while (true) {
-			int n;
-			try {
-				n = pi.read(buf, 2, PacketReader.MAX_PACKET_LEN);
-			} catch (IOException e) {
-				log.debug("error reading from peer", e);
-				disconnect();
-				break;
+			byte[] buf = new byte[PacketReader.MAX_PACKET_LEN + 2];
+			while (true) {
+				int n;
+				try {
+					n = pi.read(buf, 2, PacketReader.MAX_PACKET_LEN);
+				} catch (Exception e) {
+					log.debug("error reading from peer", e);
+					close(true);
+					break;
+				}
+				if (n == -1) {
+					log.debug("peer closed, closing tunnel");
+					close(true);
+					log.debug("tunnel closed");
+					break;
+				}
+				buf[0] = (byte)(n >> 8);
+				buf[1] = (byte)(n & 0xff);
+				try {
+					synchronized (out) {
+						ProtoOp.FORWARD.write(out);
+						out.write(buf, 0, n + 2);
+						out.flush();
+					}
+				} catch (IOException e) {
+					log.error("error writing to tunnel", e);
+					close(false);
+					break;
+				}
+				updateLiveness();
 			}
-			if (n == -1) {
-				log.info("peer closed");
-				disconnect();
-				break;
-			}
-			buf[0] = (byte) (n >> 8);
-			buf[1] = (byte) (n & 0xff);
-			try {
-				ProtoOp.FORWARD.write(out);
-				out.write(buf, 0, n + 2);
+	}
+	
+	public void keepAlive() {
+		if (ts.isClosed() || System.currentTimeMillis() - lastActive < KA_INTERVAL) return;
+		try {
+			synchronized (out) {
+				ProtoOp.KEEPALV.write(out);
+				out.write(new byte[] {0x0, 0x0});
 				out.flush();
+			}
+			updateLiveness();
+		} catch (IOException e) {
+			log.error("error sending keep alive");
+			close(false);
+		}
+	}
+	
+	private void close(boolean notifyOtherEnd) {
+		if (ts.isClosed())
+			return;
+		if (notifyOtherEnd) {
+			try {
+				synchronized (out) {
+					ProtoOp.DISCONN.write(out);
+					out.write(new byte[] { 0, 0 }); // zero length
+					out.flush();
+				}
 			} catch (IOException e) {
-				log.error("error farwarding to tunnel", e);
-				close();
-				ret = false;
-				break;
+				log.error("error sending DISCONN", e);
 			}
 		}
-		waitFor(backward);
-		return ret;
-	}
-	
-	private void waitFor(Thread t) {
 		try {
-			t.join();
-		} catch (InterruptedException e) {
-			log.debug("interrupted while waiting for thread {}", t);
-		}
-	}
-	
-	private synchronized void disconnect() {
-		try {
-			ProtoOp.DISCONN.write(out);
-			out.write(new byte[] {0,0}); // zero length
-			out.flush();
-			onDisconn();
-		} catch (IOException e) {
-			log.error("error while DISCONN", e);
-		}
-	}
-	
-	protected synchronized void onDisconn() {
-		closePeer();
-	}
-	
-	private synchronized void closePeer() {
-		if (peer == null) {return;}
-		try {
-			peer.close();
-			peer = null;
-		} catch (IOException e) {
-			log.debug("error closing peer", e);
-		}
-	}
-	
-	public synchronized void close() {
-		if (ts == null) {return;}
-		try {
+			if (peer != null) {
+				peer.close();
+			}
 			ts.close();
-			ts = null;
 		} catch (IOException e) {
-			log.debug("error while closing tunnel", e);
+			log.error("error while closing tunnel", e);
 		}
-		closePeer();
+		onClose();
 	}
 
-	
+	protected void onClose() {
+		
+	}
 }

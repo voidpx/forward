@@ -3,6 +3,7 @@ package org.sz.net.forward;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 import lombok.extern.slf4j.Slf4j;
@@ -10,11 +11,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class TunnelClient extends Tunnel {
 
-	Consumer<TunnelClient> onDisconn;
+	Consumer<TunnelClient> onClose;
 	
-	public TunnelClient(Socket ts, Consumer<TunnelClient> onDisconn) throws IOException {
+	public TunnelClient(Socket ts, Consumer<TunnelClient> onClose) throws IOException {
 		super(ts);
-		this.onDisconn = onDisconn;
+		this.onClose = onClose;
 	}
 	
 	// called on client side
@@ -35,17 +36,13 @@ public class TunnelClient extends Tunnel {
 		ProtoOp op = ProtoOp.read(in);
 		pr.read(); // zero length
 		if (op != ProtoOp.CONN_OK) {
-			onDisconn();
 			throw new IOException("cannot connect to " + host + ":" + port);
 		}
 		// connected
 	}
 	
 	@Override
-	protected synchronized void onDisconn() {
-		if (peer != null) {
-			super.onDisconn();
-			onDisconn.accept(this);
-		}
+	protected void onClose() {
+		Optional.ofNullable(onClose).ifPresent(c -> c.accept(this));
 	}
 }

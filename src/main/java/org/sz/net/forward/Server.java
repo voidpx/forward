@@ -21,15 +21,8 @@ public class Server {
 		Thread th = new Thread(() -> {
 			try {
 				TunnelServer t = new TunnelServer(s);
-				while (true) {
-					if (!t.accept()) {
-						continue;
-					}
-					if (!t.forward()) {
-						log.debug("tunnel closed");
-						break;
-					}
-				}
+				t.accept();
+				t.forward();
 			} catch (IOException e) {
 				e.printStackTrace();
 			}

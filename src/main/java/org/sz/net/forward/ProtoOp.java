@@ -9,9 +9,10 @@ public enum ProtoOp {
 	CONN_OK((short)0x1), // connect ok
 	CONN_ERR((short)0x2), // connect error
 	FORWARD((short)0x3), // forward
-	DISCONN((short)0x4); // disconnect
+	DISCONN((short)0x4), // disconnect
+	KEEPALV((short)0x5); // keep alive
 	
-	static ProtoOp[] ops = new ProtoOp[] {CONN, CONN_OK, CONN_ERR, FORWARD, DISCONN};
+	static ProtoOp[] ops = new ProtoOp[] {CONN, CONN_OK, CONN_ERR, FORWARD, DISCONN, KEEPALV};
 	
 	private short op;
 	private ProtoOp(short o) {

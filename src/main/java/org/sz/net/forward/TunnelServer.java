@@ -12,13 +12,16 @@ public class TunnelServer extends Tunnel {
 
 	public TunnelServer(Socket ts) throws IOException {
 		super(ts);
-		ts.setKeepAlive(true);
 	}
 	
 	// called on server
 	public boolean accept() throws IOException {
-		ProtoOp op = ProtoOp.read(in);
-		byte[] msg = pr.read();
+		ProtoOp op;
+		byte[] msg;
+		do {
+			op = ProtoOp.read(in);
+			msg = pr.read();
+		} while (op == ProtoOp.KEEPALV);
 		if (op != ProtoOp.CONN) {
 			throw new IOException("expected CONN command");
 		}
@@ -36,7 +39,6 @@ public class TunnelServer extends Tunnel {
 			ProtoOp.CONN_ERR.write(out);
 			out.write(new byte[] {0, 0});
 			out.flush();
-			onDisconn();
 			return false;
 		}
 		ProtoOp.CONN_OK.write(out);
