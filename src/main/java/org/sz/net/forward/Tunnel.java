@@ -8,6 +8,8 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.util.Objects;
 
+import org.sz.net.forward.PacketReader.Packet;
+
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -44,7 +46,7 @@ public class Tunnel {
 			}
 			while (true) {
 				ProtoOp op;
-				byte[] msg;
+				Packet msg;
 				try {
 					op = ProtoOp.read(in);
 					msg = pr.read();
@@ -55,7 +57,7 @@ public class Tunnel {
 				}
 				if (op == ProtoOp.FORWARD) {
 					try {
-						po.write(msg);
+						po.write(msg.getBuf(), msg.getStart(), msg.getLen());
 						po.flush();
 					} catch (IOException e) {
 						log.error("error writing to peer", e);

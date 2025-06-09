@@ -5,6 +5,8 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
+import org.sz.net.forward.PacketReader.Packet;
+
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -17,7 +19,7 @@ public class TunnelServer extends Tunnel {
 	// called on server
 	public boolean accept() throws IOException {
 		ProtoOp op;
-		byte[] msg;
+		Packet msg;
 		do {
 			op = ProtoOp.read(in);
 			msg = pr.read();
@@ -25,9 +27,9 @@ public class TunnelServer extends Tunnel {
 		if (op != ProtoOp.CONN) {
 			throw new IOException("expected CONN command");
 		}
-		int hl = msg[0];
-		String host = new String(msg, 1, hl, StandardCharsets.UTF_8);
-		int port = (msg[hl+1] << 8) | (msg[hl + 2] & 0xff);
+		int hl = msg.getBuf()[msg.getStart()];
+		String host = new String(msg.getBuf(), msg.getStart() + 1, hl, StandardCharsets.UTF_8);
+		int port = ((msg.getBuf()[msg.getStart() + 1 + hl] & 0xff) << 8) | (msg.getBuf()[msg.getStart() + hl + 2] & 0xff);
 		log.debug("accepting connection to {}:{}", host, port);
 
 		try {
