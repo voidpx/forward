@@ -8,7 +8,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.sz.net</groupId>
   <artifactId>forward</artifactId>
-  <version>0.0.5</version>
+  <version>0.0.6</version>
 
   <dependencies>
 	<dependency>
@@ -52,7 +52,11 @@
 	    <artifactId>kona-ssl</artifactId>
 	    <version>1.0.17</version>
 	</dependency>
-    
+    <dependency>
+	    <groupId>org.openjfx</groupId>
+	    <artifactId>javafx-controls</artifactId>
+	    <version>21</version>
+	  </dependency>
   </dependencies>
   
     <build>

@@ -11,7 +11,9 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
@@ -111,10 +113,16 @@ public class Start {
 			+ "	server -p <port> -a <certificate path> -n\n"
 			+ "	client -p <server port> -c <config> -h <server host> -o <port offset> -a <certificate path> -n\n";
 	
-	private static void startServer(int port, String certPath, boolean nossl) throws Exception {
+	private static void startServer(String config, int port, String certPath, boolean nossl) throws Exception {
 		if (!certPath.endsWith("/")) {
 			certPath += "/";
 		}
+		Properties p = new Properties();
+		if (config != null) {
+			p.load(new FileInputStream(Path.of(config).toFile()));
+		}
+		var allow = p.entrySet().stream().map(e -> Map.entry((String)e.getKey(), 
+				Boolean.valueOf((String)e.getValue()))).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 		SSLContext ctx = createSSLContext(
 				new KeyBundle[] { KeyBundle.fromFile("client",
 						certPath + "certs/client.crt",
@@ -124,9 +132,9 @@ public class Start {
 						certPath + "certs/server.key"), },
 				new SSLParams("TLCP", "PKIX", "NewSunX509"));
 		if (nossl) {
-			new Server(ServerSocketFactory.getDefault(), port).start();
+			new Server(ServerSocketFactory.getDefault(), port, allow).start();
 		} else {
-			new Server(ctx.getServerSocketFactory(), port).start();
+			new Server(ctx.getServerSocketFactory(), port, allow).start();
 		}
 		
 		
@@ -162,6 +170,7 @@ public class Start {
 		String cmd = args[0];
 		String certPath = "./";
 		boolean nossl = false;
+		String config = null;
 		switch (cmd) {
 		case "keytool":
 			System.out.println("args: " + String.join(" ", args));
@@ -176,13 +185,14 @@ public class Start {
 					certPath = args[i+1];
 				} else if ("-n".equals(args[i])) {
 					nossl = true;
+				} else if ("-c".equals(args[i]) && i < args.length - 1) {
+					config = args[i+1];
 				}
 			}
-			startServer(port, certPath, nossl);
+			startServer(config, port, certPath, nossl);
 			break;
 		case "client":
 			String shost = null;
-			String config = null;
 			int sport = 8888;
 			int poff = 0;
 			for (int i = 1; i < args.length; i++) {

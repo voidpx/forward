@@ -3,6 +3,7 @@ package org.sz.net.forward;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Map;
 
 import javax.net.ServerSocketFactory;
 
@@ -12,19 +13,29 @@ import lombok.extern.slf4j.Slf4j;
 public class Server {
 	ServerSocketFactory sf;
 	int port;
-	public Server(ServerSocketFactory sf, int port) {
+	Map<String, Boolean> allow;
+	public Server(ServerSocketFactory sf, int port, Map<String, Boolean> allow) {
 		this.sf = sf;
 		this.port = port;
+		this.allow = allow;
 	}
 	
-	private static void handleConn(Socket s) {
+	private void handleConn(Socket s) {
 		Thread th = new Thread(() -> {
+			TunnelServer t;
 			try {
-				TunnelServer t = new TunnelServer(s);
-				t.accept();
-				t.forward();
+				t = new TunnelServer(s, this.allow);
 			} catch (IOException e) {
-				e.printStackTrace();
+				log.error("error setting up tunnel connection", e);
+				return;
+			}
+			try {
+				if (t.accept()) {
+					t.forward();
+				}
+			} catch (IOException e) {
+				log.error(e.getMessage(), e);
+				t.close(false);
 			}
 		});
 		th.setDaemon(true);

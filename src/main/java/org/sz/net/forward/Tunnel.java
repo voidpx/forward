@@ -136,7 +136,7 @@ public class Tunnel {
 		}
 	}
 	
-	private void close(boolean notifyOtherEnd) {
+	public void close(boolean notifyOtherEnd) {
 		if (ts.isClosed())
 			return;
 		if (notifyOtherEnd) {

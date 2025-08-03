@@ -4,6 +4,9 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 
 import org.sz.net.forward.PacketReader.Packet;
 
@@ -11,9 +14,11 @@ import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class TunnelServer extends Tunnel {
+	Map<String, Boolean> allow = new HashMap<>();
 
-	public TunnelServer(Socket ts) throws IOException {
+	public TunnelServer(Socket ts, Map<String, Boolean> allow) throws IOException {
 		super(ts);
+		Optional.ofNullable(allow).ifPresent(this.allow::putAll);
 	}
 	
 	// called on server
@@ -30,6 +35,16 @@ public class TunnelServer extends Tunnel {
 		int hl = msg.getBuf()[msg.getStart()];
 		String host = new String(msg.getBuf(), msg.getStart() + 1, hl, StandardCharsets.UTF_8);
 		int port = ((msg.getBuf()[msg.getStart() + 1 + hl] & 0xff) << 8) | (msg.getBuf()[msg.getStart() + hl + 2] & 0xff);
+		
+		String k = host + ":" + port;
+		if (!allow.containsKey(k) || !allow.get(k)) {
+			log.warn("connection to {} not allowed by policy!", k);
+			ProtoOp.CONN_ERR.write(out);
+			out.write(new byte[] {0, 0});
+			out.flush();
+			close(false);
+			return false;
+		}
 		log.debug("accepting connection to {}:{}", host, port);
 
 		try {
