@@ -2,19 +2,34 @@ package org.sz.net.forward;
 
 import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.KeyStore;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
+import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Collectors;
 
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
 import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 import javax.net.ssl.KeyManagerFactory;
@@ -25,6 +40,8 @@ import com.tencent.kona.crypto.CryptoInsts;
 import com.tencent.kona.pkix.KonaPKIXProvider;
 import com.tencent.kona.ssl.KonaSSLProvider;
 import com.tencent.kona.sun.security.tools.keytool.Main;
+
+import cn.ksh.crypto.api.Crypto;
 
 public class Start {
 
@@ -141,6 +158,27 @@ public class Start {
 	}
 	
 	private static void startClient(String config, String shost, int sport, int poff, String certPath, boolean nossl) throws Exception {
+		Properties p = new Properties();
+		if (config == null) {
+			// take it from stdin, and decrypt
+			byte[] in = System.in.readAllBytes();
+			int idx = -1;
+			for (int i = 0; i < in.length; i++) {
+				if (in[i] == '\n') {
+					idx = i;
+					break;
+				}
+			}
+			if (idx <= 0) {
+				throw new IllegalArgumentException("Invalid config");
+			}
+			String pwd = new String(Arrays.copyOfRange(in, 0, idx), StandardCharsets.UTF_8);
+			byte[] cfg = Arrays.copyOfRange(in, idx + 1, in.length);
+			String dec = doDecryptAsString(pwd, new String(cfg, StandardCharsets.UTF_8));
+			p.load(new StringReader(dec));
+		} else {
+			p.load(new FileInputStream(Path.of(config).toFile()));
+		}
 		if (!certPath.endsWith("/")) {
 			certPath += "/";
 		}
@@ -152,8 +190,6 @@ public class Start {
 						certPath + "certs/client.crt",
 						certPath + "certs/client.key"), },
 				new SSLParams("TLCP", "TencentPKIX", "PKIX"));
-		Properties p = new Properties();
-		p.load(new FileInputStream(Path.of(config).toFile()));
 		if (nossl) {
 			new Client(SocketFactory.getDefault(), p, shost, sport, poff).start();
 		} else {
@@ -161,63 +197,187 @@ public class Start {
 		}
 		
 	}
+	
+	private static void errorOut() {
+		System.out.println(USAGE);
+		System.exit(1);
+	}
+	
+	static class Options {
+		List<Option> opts;
+		Options(List<Option> opts) {
+			this.opts = opts;
+		}
+		static Options parse(String[] cmdline, Option... opts) {
+			if (opts == null || cmdline == null) {
+				return new Options(Collections.emptyList());
+			}
+			List<Option> all = new ArrayList<>(Arrays.asList(opts));
+			List<Option> ret = new ArrayList<>();
+			for (int i = 0; i < cmdline.length; i++) {
+				for (Option o : opts) {
+					if (cmdline[i].equals(o.opt)) {
+						if (o.requireArg) {
+							if (i < cmdline.length - 1) {
+								o.arg = cmdline[i+1];
+								i+=1;
+							} else {
+								throw new IllegalArgumentException("option " + o.opt + " requires an argument");
+							}
+						}
+						ret.add(o);
+						all.remove(o);
+					}
+				}
+			}
+			for (Option o : all) {
+				if (o.required) {
+					throw new IllegalArgumentException("required option " + o.opt + " not provided");
+				}
+			}
+			return new Options(ret);
+		}
+		
+		boolean present(Option o) {
+			return opts.stream().filter(a -> a == o).findAny().isPresent();
+		}
+		
+	}
+	
+	static enum Option {
+		p("-p", true, true),
+		c("-c", true, true),
+		h("-h", true, true),
+		n("-n", false, false),
+		o("-o", false, true),
+		a("-a", false, true);
+		String opt;
+		boolean required;
+		boolean requireArg;
+		String arg;
+		private Option(String opt, boolean required, boolean requireArg) {
+			this.opt = opt;
+			this.requireArg = requireArg;
+		}
+		
+		@SuppressWarnings("unchecked")
+		<T> T getArg(Class<T> type) {
+			if (type == Integer.class) {
+				return (T) Integer.valueOf(arg);
+			}
+			return (T) arg;
+		}
+		
+	}
+	
+	private static final  int iterations = 65536; // Higher = slower but more secure
+    private static final  int keyLength = 128; // bits
+    private static final  int ivLen = 12;
+
+    private static byte[] genSalt() {
+    	byte[] salt = new byte[keyLength/8];
+        SecureRandom random = new SecureRandom();
+        random.nextBytes(salt);
+        return salt;
+    }
+    
+    private static byte[] deriveKey(String pass, byte[] salt) throws NoSuchAlgorithmException, InvalidKeySpecException {
+        PBEKeySpec spec = new PBEKeySpec(pass.toCharArray(), salt, iterations, keyLength);
+        
+        // 4. Generate the key using PBKDF2WithHmacSHA256
+        SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+        byte[] keyBytes = factory.generateSecret(spec).getEncoded();
+        
+        SecretKey secretKey = new SecretKeySpec(keyBytes, "sm4");
+        return secretKey.getEncoded();
+    }
+    
+    private static String doEncryptFile(String pass, String cfgPath) throws NoSuchAlgorithmException, InvalidKeySpecException, IOException {
+    	return doEncrypt(pass, Files.readAllBytes(Path.of(cfgPath)));
+    }
+
+	private static String doEncrypt(String pass, byte[] cfg) throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
+		Crypto c = Crypto.getInstance("sm4", null);
+		byte[] salt = genSalt();
+		byte[] key = deriveKey(pass, salt);
+		byte[] iv = Arrays.copyOfRange(salt, 0, ivLen); // iv len: 12
+		byte[] enc = c.encrypt(key, iv, cfg);
+	
+		byte[] buf = new byte[salt.length + enc.length];
+		System.arraycopy(salt, 0, buf, 0, salt.length);
+		System.arraycopy(enc, 0, buf, salt.length, enc.length);
+		String out = Base64.getEncoder().encodeToString(buf);
+		return out;
+	}
+	
+	private static byte[] doDecrypt(String pass, String encrypted) throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
+		Crypto c = Crypto.getInstance("sm4", null);
+		byte[] dec = Base64.getDecoder().decode(encrypted);
+		byte[] salt = Arrays.copyOfRange(dec, 0, keyLength/8);
+		byte[] iv = Arrays.copyOfRange(salt, 0, ivLen);
+		byte[] data = Arrays.copyOfRange(dec, salt.length, dec.length);
+		byte[] key = deriveKey(pass, salt);
+		byte[] cfg = c.decrypt(key, iv, data);
+		return cfg;
+	}
+	
+	private static String doDecryptAsString(String pass, String encrypted) throws NoSuchAlgorithmException, InvalidKeySpecException, IOException {
+		return new String(doDecrypt(pass, encrypted), StandardCharsets.UTF_8);
+	}
 
 	public static void main(String[] args) throws Exception {
 		if (args.length == 0) {
-			System.out.println(USAGE);
-			System.exit(1);
+			errorOut();
 		}
 		String cmd = args[0];
 		String certPath = "./";
-		boolean nossl = false;
-		String config = null;
+		String[] options = Arrays.copyOfRange(args, 1, args.length);
 		switch (cmd) {
+		case "encrypt":
+			Option.c.required = true;
+			Options.parse(options, Option.p, Option.c);
+			System.out.println(doEncryptFile(Option.p.arg, Option.c.arg));
+			break;
+		case "decrypt":
+			Option.c.required = true;
+			Options.parse(options, Option.p, Option.c);
+			System.out.println(doDecryptAsString(Option.p.arg, Option.c.arg));
+			break;
 		case "keytool":
 			System.out.println("args: " + String.join(" ", args));
 			Main.main(args);
 			break;
 		case "server":
 			int port = 8888;
-			for (int i = 1; i < args.length; i++) {
-				if ("-p".equals(args[i]) && i < args.length - 1) {
-					port = Integer.parseInt(args[i+1]);
-				} else if ("-a".equals(args[i]) && i < args.length - 1 && args[i+1] != null) {
-					certPath = args[i+1];
-				} else if ("-n".equals(args[i])) {
-					nossl = true;
-				} else if ("-c".equals(args[i]) && i < args.length - 1) {
-					config = args[i+1];
-				}
+			Option.p.required = false;
+			Options opts = Options.parse(options, Option.p, Option.a, Option.n, Option.c);
+			if (opts.present(Option.p)) {
+				port = Option.p.getArg(Integer.class);
 			}
-			startServer(config, port, certPath, nossl);
+			if (opts.present(Option.a)) {
+				certPath = Option.a.arg;
+			}
+			startServer(Option.c.arg, port, certPath, opts.present(Option.n));
 			break;
 		case "client":
-			String shost = null;
 			int sport = 8888;
 			int poff = 0;
-			for (int i = 1; i < args.length; i++) {
-				if ("-p".equals(args[i]) && i < args.length - 1) {
-					sport = Integer.parseInt(args[i+1]);
-				} else if ("-h".equals(args[i]) && i < args.length - 1) {
-					shost = args[i+1];
-				} else if ("-c".equals(args[i]) && i < args.length - 1) {
-					config = args[i+1];
-				} else if ("-o".equals(args[i]) && i < args.length - 1) {
-					poff = Integer.parseInt(args[i+1]);
-				} else if ("-a".equals(args[i]) && i < args.length - 1 && args[i+1] != null) {
-					certPath = args[i+1];
-				} else if ("-n".equals(args[i])) {
-					nossl = true;
-				}
+			Option.p.required = false;
+			Option.c.required = false;
+			Options copts = Options.parse(options, Option.p, Option.h, Option.o, Option.a, Option.n, Option.c);
+			if (copts.present(Option.p)) {
+				sport = Option.p.getArg(Integer.class);
 			}
-			if (shost == null) {
-				throw new IllegalArgumentException("-h is required to specify the remote host");
+			if (copts.present(Option.o)) {
+				poff = Option.o.getArg(Integer.class);
 			}
-			if (config == null) {
-				throw new IllegalArgumentException("-c is required to specify the configuration file");
+			if (copts.present(Option.a)) {
+				certPath = Option.a.arg;
 			}
-			startClient(config, shost, sport, poff, certPath, nossl);
+			startClient(Option.c.arg, Option.h.arg, sport, poff, certPath, copts.present(Option.n));
 			break;
+		default:
+			errorOut();
 		}
 	}
 }
