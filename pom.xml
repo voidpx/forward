@@ -53,11 +53,9 @@
 	    <version>1.0.17</version>
 	</dependency>
     <dependency>
-	    <groupId>org.sz</groupId>
-	    <artifactId>crypto-lib</artifactId>
-	    <version>0.0.1</version>
-	    <scope>system</scope>
-	    <systemPath>${basedir}/crypto-lib-0.0.1.jar</systemPath>
+	    <groupId>org.openjfx</groupId>
+	    <artifactId>javafx-controls</artifactId>
+	    <version>21</version>
 	  </dependency>
   </dependencies>
   
@@ -88,7 +86,6 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <excludeGroupIds>org.projectlombok</excludeGroupIds>
-                    <includeSystemScope>true</includeSystemScope>
                 </configuration>
             </plugin>
 		</plugins>
