@@ -77,22 +77,36 @@ public class Client {
 	
 	private void handleConn(Socket peer) throws UnknownHostException, IOException {
 		Thread th = new Thread(() -> {
-			TunnelClient t;
-			try {
-				t = pool.get();
-			} catch (IOException e) {
-				log.error("error retrieving a tunnel connection", e);
-				return;
+			Pair pr = ports.get(peer.getLocalPort());
+			Peer remote = parsePeer(pr.remote, pr.getLocal().getPort());
+			TunnelClient t = null;
+			for (int i = 0; i < TunnelClientPool.IDLE_CONNS + 1; i++) {
+				try {
+					t = pool.get();
+				} catch (IOException e) {
+					log.error("error retrieving a tunnel connection", e);
+					break;
+				}
+				try {
+					t.connect(peer, remote.getHost(), remote.getPort());
+					break;
+				} catch (IOException e) {
+					log.error(e.getMessage(), e);
+					t.close(false);
+					t = null;
+				}
 			}
-			try {
-				Pair pr = ports.get(peer.getLocalPort());
-				Peer remote = parsePeer(pr.remote, pr.getLocal().getPort());
-				t.connect(peer, remote.getHost(), remote.getPort());
+			if (t != null) {
 				t.forward();
-			} catch (IOException e) {
-				log.error(e.getMessage(), e);
-				t.close(false);
+			} else {
+				log.error("Unable to connect to remote");
+				try {
+					peer.close();
+				} catch (IOException e) {
+					log.error("error closing peer", e);
+				}
 			}
+			
 		});
 		th.setName(peer.toString());
 		th.setDaemon(true);
