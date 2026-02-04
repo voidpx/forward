@@ -12,7 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class TunnelClientPool implements Runnable {
-	private static final int IDLE_CONNS = 5;
+	static final int IDLE_CONNS = 5;
 	LinkedList<TunnelClient> idle = new LinkedList<>();
 	Set<TunnelClient> active = new HashSet<>();
 	String host;
@@ -88,6 +88,9 @@ public class TunnelClientPool implements Runnable {
 	private void close(TunnelClient t) {
 		synchronized (active) {
 			active.remove(t);
+		}
+		synchronized (idle) {
+			idle.remove(t);
 		}
 	}
 
